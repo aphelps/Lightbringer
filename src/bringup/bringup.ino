@@ -1,8 +1,9 @@
 /*******************************************************************************
+ * Author: Adam Phelps
  * License: MIT
- * Copyright: 2014
+ * Copyright: 2017
  *
- * Bringup code for wireless pendants
+ * Bringup code for Lightbringer control boards
  */
 
 #define DEBUG_LEVEL DEBUG_HIGH
@@ -83,10 +84,11 @@ void setup() {
     for (unsigned int i = 0; i < pixels.numPixels(); i++) {
       pixels.setPixelRGB(i, 0, 0, 0);
     }
+
+    pixels.setBrightness(128);
+
     pixels.update();
     has_pixels = true;
-
-    FastLED.setBrightness(32); // XXX - Pixels?
   }
 }
 
