@@ -1,0 +1,31 @@
+{
+    "info": "Base lightbringer onfig for HMTL v1r5-v1r9 board",
+    "header": {
+	      "protocol_version": 3,
+	      "hardware_version": 4,
+	      "baud": 57600,
+	      "device_id": 0,
+	      "address": 0,
+	      "flags": 0
+    },
+    "outputs": [
+	      {
+	          "type": "rgb",
+	          "pins": [ 11, 13, 10 ],
+	          "values": [ 0, 0, 0 ]
+	      },
+	      {
+	          "type": "pixels",
+	          "clockpin": 8,
+	          "datapin": 12,
+	          "numpixels": 207,
+	          "rgbtype": 0
+	      },
+	      {
+	          "type": "rs485",
+	          "recvpin": 4,
+	          "xmitpin": 7,
+	          "enablepin": 2
+	      }
+    ]
+}
