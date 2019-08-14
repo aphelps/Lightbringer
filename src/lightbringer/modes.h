@@ -23,13 +23,47 @@ boolean messages_and_modes(void);
 
 /* Wireless pendant programs */
 #define PENDANT_TEST_PIXELS 0x20
+#define TRIANGES_FADE       0x21
+
+#define TRIANGLE_SIZE 5
 
 /* Mode program prototypes */
 boolean program_test_pixels_init(msg_program_t *msg,
                                  program_tracker_t *tracker,
-                                 output_hdr_t *output);
+                                 output_hdr_t *output, void *object,
+                                 ProgramManager *manager);
 
 boolean program_test_pixels(output_hdr_t *output, void *object,
                             program_tracker_t *tracker);
+
+typedef struct __attribute__((packed)) {
+  uint32_t period;  //  4B
+  uint8_t  num_colors;     //  1B
+  uint8_t  strip_length;   //  1B
+  uint8_t  flags;          //  1B
+  CRGB     colors[8];      // 24B (3x8)
+} triangles_fade_msg_t;    // 31B Total (32B limit)
+
+typedef struct {
+  triangles_fade_msg_t msg;
+  unsigned long last_change_ms;
+  uint8_t start_color;
+} triangles_fade_state_t;
+
+boolean program_triangles_fade_init(msg_program_t *msg,
+                                    program_tracker_t *tracker,
+                                    output_hdr_t *output, void *object,
+                                    ProgramManager *manager);
+
+boolean program_triangles_fade(output_hdr_t *output, void *object,
+                               program_tracker_t *tracker);
+uint16_t program_triangles_fade_fmt(byte *buffer, uint16_t buffsize,
+                                    uint16_t address, uint8_t output,
+                                    uint32_t period,
+                                    uint8_t  num_colors,
+                                    uint8_t  strip_length,
+                                    uint8_t  flags,
+                                    CRGB     *colors);
+
 
 #endif // LIGHTBRINGER_MODES_H

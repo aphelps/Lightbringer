@@ -39,7 +39,8 @@ hmtl_program_t program_functions[] = {
         { PROGRAM_COLOR, NULL, program_color},
 
         // Custom programs
-        //{ PENDANT_TEST_PIXELS, program_test_pixels, program_test_pixels_init },
+        { PENDANT_TEST_PIXELS, program_test_pixels, program_test_pixels_init },
+        { TRIANGES_FADE, program_triangles_fade, program_triangles_fade_init },
 };
 #define NUM_PROGRAMS (sizeof (program_functions) / sizeof (hmtl_program_t))
 
@@ -52,10 +53,23 @@ MessageHandler handler;
  */
 void startup_commands() {
   byte output = manager.lookup_output_by_type(HMTL_OUTPUT_PIXELS);
-  DEBUG4_VALUELN("Init: sparkle ", output);
-  program_sparkle_fmt(rs485.send_buffer, rs485.send_data_size,
-                      config.address, output,
-                      0,0,0,0,0,0,0,0,0,0);
+//  DEBUG4_VALUELN("Init: sparkle ", output);
+//  program_sparkle_fmt(rs485.send_buffer, rs485.send_data_size,
+//                      config.address, output,
+//                      0,0,0,0,0,0,0,0,0,0);
+
+  DEBUG3_VALUELN("Init: triangles fade ", output);
+  CRGB colors[6] = {
+          CRGB(50,00,00),
+          CRGB(25,25,00),
+          CRGB(00,50,00),
+          CRGB(00,25,25),
+          CRGB(00,00,50),
+          CRGB(25,00,25),
+  };
+  program_triangles_fade_fmt(rs485.send_buffer, rs485.send_data_size,
+                             config.address, output,
+                             1000, sizeof(colors) / sizeof(CRGB), 0, 1, colors);
 
   handler.process_msg((msg_hdr_t *)rs485.send_buffer, &rs485, NULL, &config);
 
@@ -113,7 +127,8 @@ typedef struct {
 
 boolean program_test_pixels_init(msg_program_t *msg,
                                  program_tracker_t *tracker,
-                                 output_hdr_t *output) {
+                                 output_hdr_t *output, void *object,
+                                 ProgramManager *manager) {
   if ((output == NULL) || (output->type != HMTL_OUTPUT_PIXELS)) {
     return false;
   }
@@ -164,6 +179,105 @@ boolean program_test_pixels(output_hdr_t *output, void *object,
 
     state->cycle++;
     state->last_change_ms = now;
+
+    return true;
+  }
+
+  return false;
+}
+
+/*
+ *
+ */
+
+uint16_t program_triangles_fade_fmt(byte *buffer, uint16_t buffsize,
+                                    uint16_t address, uint8_t output,
+                                    uint32_t period,
+                                    uint8_t  num_colors,
+                                    uint8_t  strip_length,
+                                    uint8_t  flags,
+                                    CRGB     *colors){
+  msg_hdr_t *msg_hdr = (msg_hdr_t *)buffer;
+  msg_program_t *msg_program = (msg_program_t *)(msg_hdr + 1);
+
+  hmtl_program_fmt(msg_program, output, TRIANGES_FADE, buffsize);
+
+  triangles_fade_msg_t *program =
+          (triangles_fade_msg_t *)msg_program->values;
+
+  /* If the other values are set then don't memset */
+  memset(program, 0, MAX_PROGRAM_VAL);
+  program->period = period;
+  program->num_colors = num_colors;
+  program->strip_length = strip_length;
+  program->strip_length = strip_length;
+  program->flags = flags;
+  memcpy(program->colors, colors, sizeof(CRGB) * num_colors);
+
+  hmtl_msg_fmt(msg_hdr, address, HMTL_MSG_PROGRAM_LEN, MSG_TYPE_OUTPUT);
+  return HMTL_MSG_PROGRAM_LEN;
+
+}
+
+boolean program_triangles_fade_init(msg_program_t *msg,
+                                    program_tracker_t *tracker,
+                                    output_hdr_t *output, void *object,
+                                    ProgramManager *manager){
+  if ((output == NULL) ||(output->type != HMTL_OUTPUT_PIXELS)) {
+    DEBUG4_PRINTLN("traingles_fade: bad config");
+    return false;
+  }
+
+  DEBUG3_PRINT("Initializing triangle fade program");
+  triangles_fade_state_t *state =
+          (triangles_fade_state_t *)manager->get_program_state(tracker, sizeof(triangles_fade_state_t));
+
+  DEBUG4_VALUE(" msgsz=", sizeof (state->msg));
+
+  memcpy(&state->msg, msg->values, sizeof (state->msg)); // ??? Correct size?
+  if (state->msg.period == 0) state->msg.period = 50;
+  if (state->msg.strip_length == 0) state->msg.strip_length = TRIANGLE_SIZE;
+
+  state->last_change_ms = 0;
+  state->start_color = 0;
+
+  DEBUG4_VALUE(" change_period:", state->msg.period);
+  DEBUG4_VALUE(" num_colors:", state->msg.num_colors);
+  DEBUG4_VALUE(" strip_length:", state->msg.strip_length);
+  DEBUG4_VALUE(" flags:", state->msg.flags);
+  DEBUG_ENDLN();
+
+  return true;
+
+}
+
+boolean program_triangles_fade(output_hdr_t *output, void *object,
+                               program_tracker_t *tracker) {
+  unsigned long now = timesync.ms();
+  triangles_fade_state_t *state = (triangles_fade_state_t *)tracker->state;
+
+  if (now - state->last_change_ms >= state->msg.period) {
+    PixelUtil *pixels = (PixelUtil*)object;
+
+    state->last_change_ms = now;
+
+    uint8_t color = state->start_color % state->msg.num_colors;
+    uint8_t color_count = 0;
+
+    for (uint16_t led = 0; led < pixels->numPixels(); led++) {
+      if (color_count == state->msg.strip_length) {
+        color = (color + (uint8_t)1) % state->msg.num_colors;
+        color_count = 0;
+      }
+
+      // TODO: Interpolate
+
+      pixels->setPixelRGB(led, state->msg.colors[color]);
+
+      color_count++;
+    }
+
+    state->start_color++;
 
     return true;
   }
