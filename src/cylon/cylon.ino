@@ -25,6 +25,10 @@ void setup() {
   initialized = true;
   LEDS.addLeds<APA102, 5, 7, RGB, DATA_RATE_MHZ(1)>(leds, NUM_LEDS);
 #endif
+#ifdef PIXELS_APA102_12_8
+  initialized = true;
+  LEDS.addLeds<APA102, 12, 8, RGB, DATA_RATE_MHZ(1)>(leds, NUM_LEDS);
+#endif
 
   if (!initialized) {
     LEDS.addLeds<APA102, 11, 13, RGB, DATA_RATE_MHZ(1)>(leds, NUM_LEDS);

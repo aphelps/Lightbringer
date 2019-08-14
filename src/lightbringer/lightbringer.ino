@@ -42,13 +42,18 @@
 
 /******/
 
+/*
+ * A timesync object must be defined and initialized here as some libraries
+ * require it during initialization.
+ */
+TimeSync timesync;
+
 config_hdr_t config;
 output_hdr_t *outputs[HMTL_MAX_OUTPUTS];
 config_max_t readoutputs[HMTL_MAX_OUTPUTS];
 void *objects[HMTL_MAX_OUTPUTS];
 
-config_value_t value_output;
-
+TimeSync time;
 PixelUtil pixels;
 
 RS485Socket rs485;
@@ -59,7 +64,7 @@ byte rs485_data_buffer[RS485_BUFFER_TOTAL(SEND_BUFFER_SIZE)];
 Socket *sockets[MAX_SOCKETS] = { NULL, NULL };
 
 void setup() {
-  Serial.begin(57600);
+  Serial.begin(115200);
 
   int configOffset = -1;
   int32_t outputs_found = hmtl_setup(&config, readoutputs,
@@ -69,7 +74,7 @@ void setup() {
                                      &pixels,
                                      NULL,          // MPR121
                                      NULL,          // RGB
-                                     &value_output, // Value
+                                     NULL, // Value
                                      &configOffset);
 
   DEBUG4_VALUE("Config size:", configOffset - HMTL_CONFIG_ADDR);
@@ -80,8 +85,6 @@ void setup() {
       pixels.setPixelRGB(i, 0, 0, 0);
     }
     pixels.update();
-
-    FastLED.setBrightness(128); // TODO - Should be in Pixels?
   }
 
   /* Setup communication devices */

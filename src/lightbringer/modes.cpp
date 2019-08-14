@@ -32,9 +32,14 @@ hmtl_program_t program_functions[] = {
         { HMTL_PROGRAM_BLINK, program_blink, program_blink_init },
         { HMTL_PROGRAM_TIMED_CHANGE, program_timed_change, program_timed_change_init },
         { HMTL_PROGRAM_FADE, program_fade, program_fade_init },
+        { HMTL_PROGRAM_SPARKLE, program_sparkle, program_sparkle_init },
+        { HMTL_PROGRAM_CIRCULAR, program_circular, program_circular_init},
+
+        { PROGRAM_BRIGHTNESS, NULL,  program_brightness },
+        { PROGRAM_COLOR, NULL, program_color},
 
         // Custom programs
-        { PENDANT_TEST_PIXELS, program_test_pixels, program_test_pixels_init },
+        //{ PENDANT_TEST_PIXELS, program_test_pixels, program_test_pixels_init },
 };
 #define NUM_PROGRAMS (sizeof (program_functions) / sizeof (hmtl_program_t))
 
@@ -46,14 +51,13 @@ MessageHandler handler;
  * Execute initial commands
  */
 void startup_commands() {
-  const byte data[] = { // This turns on PENDANT_TEST_PIXELS for all outputs
-          0xfc,0x00,0x02,0x17,0x01,0x00,0xff,0xff,
-          0x03,0xfe,0x20,0x32,0x00,0x00,0x00,0x00,
-          0x00,0x00,0x00,0x00,0x00,0x00,0x00};
-  memcpy(rs485.send_buffer, data, sizeof (data));
+  byte output = manager.lookup_output_by_type(HMTL_OUTPUT_PIXELS);
+  DEBUG4_VALUELN("Init: sparkle ", output);
+  program_sparkle_fmt(rs485.send_buffer, rs485.send_data_size,
+                      config.address, output,
+                      0,0,0,0,0,0,0,0,0,0);
 
-  handler.process_msg((msg_hdr_t *)rs485.send_buffer, &rs485,
-                      NULL, &config);
+  handler.process_msg((msg_hdr_t *)rs485.send_buffer, &rs485, NULL, &config);
 
 }
 
@@ -96,6 +100,8 @@ boolean messages_and_modes(void) {
       hmtl_update_output(outputs[i], objects[i]);
     }
   }
+
+  return update;
 }
 
 
@@ -113,7 +119,7 @@ boolean program_test_pixels_init(msg_program_t *msg,
   }
 
   mode_test_state_t *state = (mode_test_state_t *)malloc(sizeof(mode_test_state_t));
-  state->last_change_ms = time.ms();
+  state->last_change_ms = timesync.ms();
   state->period = *(uint16_t *)msg->values;
   if (state->period == 0)
     state->period = 100;
@@ -135,7 +141,7 @@ void setXY(PixelUtil *pixels, const uint8_t x, const uint8_t y,
 boolean program_test_pixels(output_hdr_t *output, void *object,
                             program_tracker_t *tracker) {
   mode_test_state_t *state = (mode_test_state_t *)tracker->state;
-  unsigned long now = time.ms();
+  unsigned long now = timesync.ms();
 
   if (now - state->last_change_ms > state->period) {
     static uint8_t x = 0, y = 0;
