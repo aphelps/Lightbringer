@@ -41,6 +41,7 @@ hmtl_program_t program_functions[] = {
         // Custom programs
         { PENDANT_TEST_PIXELS, program_test_pixels, program_test_pixels_init },
         { TRIANGES_FADE, program_triangles_fade, program_triangles_fade_init },
+        { SECTION_TWINKLE, section_twinkle, section_twinkle_init},
 };
 #define NUM_PROGRAMS (sizeof (program_functions) / sizeof (hmtl_program_t))
 
@@ -59,15 +60,17 @@ void startup_commands() {
 //                      0,0,0,0,0,0,0,0,0,0);
 
   DEBUG3_VALUELN("Init: triangles fade ", output);
+#if 0
   CRGB colors[] = {
           CRGB(00,00,00),
-          CRGB(50,00,00),
-          CRGB(25,25,00),
-          CRGB(00,50,00),
-          CRGB(00,25,25),
+          //CRGB(50,00,00),
+          //CRGB(25,25,00),
+          //CRGB(00,50,00),
+          //CRGB(00,25,25),
+          CRGB(00,00,255),
           CRGB(00,00,50),
           CRGB(25,00,25),
-          CRGB(10,10,10),
+          CRGB(00,25,25),
   };
   program_triangles_fade_fmt(rs485.send_buffer, rs485.send_data_size,
                              config.address, output,
@@ -76,6 +79,16 @@ void startup_commands() {
                              0, // Strip length (0 == default)
                              1,
                              colors);
+#else
+  section_twinkle_fmt(rs485.send_buffer, rs485.send_data_size,
+                      config.address, output,
+                      1000, // Period MS
+                      50,  // Twinkle MS
+                      0, // Strip length (0 == default)
+                      CRGB(0,0,0), // Background color
+                      CRGB(255,255,255) // Foreground color
+                      );
+#endif
 
   handler.process_msg((msg_hdr_t *)rs485.send_buffer, &rs485, NULL, &config);
 
@@ -228,7 +241,7 @@ uint16_t program_triangles_fade_fmt(byte *buffer, uint16_t buffsize,
 boolean program_triangles_fade_init(msg_program_t *msg,
                                     program_tracker_t *tracker,
                                     output_hdr_t *output, void *object,
-                                    ProgramManager *manager){
+                                    ProgramManager *manager) {
   if ((output == NULL) ||(output->type != HMTL_OUTPUT_PIXELS)) {
     DEBUG4_PRINTLN("traingles_fade: bad config");
     return false;
@@ -261,11 +274,27 @@ boolean program_triangles_fade_init(msg_program_t *msg,
   return true;
 }
 
+/*
+ * Divide the pixels into sections of equal length and apply a color to the
+ * indicated section.
+ */
+void set_led_section(PixelUtil *pixels, uint8_t section, uint8_t section_length,
+                     CRGB color) {
+  pixel_range_t range = {
+          .start = (PIXEL_ADDR_TYPE)((PIXEL_ADDR_TYPE)section * section_length),
+          .length = (PIXEL_ADDR_TYPE)section_length
+  };
+  pixels->setRangeRGB(range, color);
+}
+
 boolean program_triangles_fade(output_hdr_t *output, void *object,
                                program_tracker_t *tracker) {
   unsigned long now = timesync.ms();
   auto *state = (triangles_fade_state_t *)tracker->state;
   PixelUtil *pixels = (PixelUtil*)object;
+  uint8_t color;
+  CRGB current;
+  fract8 fraction;
 
   unsigned long elapsed = now - state->last_change_ms;
   if (elapsed >= state->msg.period) {
@@ -275,26 +304,142 @@ boolean program_triangles_fade(output_hdr_t *output, void *object,
     state->start_color++;
   }
 
-  fract8 fraction = (fract8)map(elapsed, 0, state->msg.period, 0, 255);
+  fraction = (fract8)map(elapsed, 0, state->msg.period, 0, 255);
 
-  uint8_t color = state->start_color % state->msg.num_colors;
-  uint8_t color_count = 0;
-  CRGB current = state->msg.colors[color];
+  for (uint8_t section = 0;
+       section < pixels->numPixels()/state->msg.strip_length;
+       section++) {
+    color = (state->start_color + section) % state->msg.num_colors;
+    current = blend(state->msg.colors[color],
+                    state->msg.colors[(color + 1) % state->msg.num_colors],
+                    fraction);
+    set_led_section(pixels, section, state->msg.strip_length, current);
+  }
 
-  for (uint16_t led = 0; led < pixels->numPixels(); led++) {
-    if (color_count % state->msg.strip_length == 0) {
-      /* Advance to the next color and determine the color fade to actually use */
-      color = (color + (uint8_t)1) % state->msg.num_colors;
-      current = blend(state->msg.colors[color],
-                      state->msg.colors[(color + 1) % state->msg.num_colors],
-                      fraction);
-      color_count = 0;
+  return true;
+}
+
+/******************************************************************************
+ * This mode splits the pixels into sections, and then flashes the segments
+ * between a background and foreground color
+ */
+uint16_t section_twinkle_fmt(byte *buffer, uint16_t buffsize,
+                             uint16_t address, uint8_t output,
+                             uint32_t period,
+                             uint16_t twinkle_ms,
+                             uint8_t  strip_length,
+                             CRGB     bgColor,
+                             CRGB     fgColor) {
+  auto *msg_hdr = (msg_hdr_t *)buffer;
+  auto *msg_program = (msg_program_t *)(msg_hdr + 1);
+
+  hmtl_program_fmt(msg_program, output, SECTION_TWINKLE, buffsize);
+
+  auto *program = (section_twinkle_t *)msg_program->values;
+
+  /* If the other values are set then don't memset */
+  memset(program, 0, MAX_PROGRAM_VAL);
+  program->period_ms = period;
+  program->twinkle_ms = twinkle_ms;
+  program->strip_length = strip_length;
+  program->bgColor = bgColor;
+  program->fgColor = fgColor;
+
+  hmtl_msg_fmt(msg_hdr, address, HMTL_MSG_PROGRAM_LEN, MSG_TYPE_OUTPUT);
+  return HMTL_MSG_PROGRAM_LEN;
+}
+
+boolean section_twinkle_init(msg_program_t *msg,
+                             program_tracker_t *tracker,
+                             output_hdr_t *output, void *object,
+                             ProgramManager *manager) {
+  if ((output == NULL) ||(output->type != HMTL_OUTPUT_PIXELS)) {
+    DEBUG4_PRINTLN("section_twinkle: bad config");
+    return false;
+  }
+  PixelUtil *pixels = (PixelUtil *) object;
+  uint8_t num_sections = pixels->numPixels() / ((section_twinkle_t *)msg)->strip_length;
+
+  DEBUG3_PRINT("Initializing section twinkle program");
+  auto *state = (section_twinkle_state_t *)manager->get_program_state(tracker, SECTION_TWINKLE_STATE_SIZE(num_sections));
+
+  DEBUG4_VALUE(" msgsz:", sizeof (state->msg));
+
+  memset(state, 0, SECTION_TWINKLE_STATE_SIZE(num_sections));
+  memcpy(&state->msg, msg->values, sizeof(state->msg));
+  if (state->msg.period_ms == 0) state->msg.period_ms = 1000;
+  if (state->msg.twinkle_ms == 0) state->msg.twinkle_ms = (uint16_t)(state->msg.period_ms / 10);
+  if (state->msg.strip_length == 0) state->msg.strip_length = DEFAULT_STRIP_LENGTH;
+  state->previous_time = timesync.ms();
+
+  DEBUG4_VALUE(" period:", state->msg.period_ms);
+  DEBUG4_VALUE(" twinkle_ms:", state->msg.twinkle_ms);
+  DEBUG4_VALUE(" strip_length:", state->msg.strip_length);
+  DEBUG4_VALUE(" bg:", state->msg.bgColor.r);
+  DEBUG4_VALUE(",", state->msg.bgColor.g);
+  DEBUG4_VALUE(",", state->msg.bgColor.b);
+  DEBUG4_VALUE(" fg:", state->msg.fgColor.r);
+  DEBUG4_VALUE(",", state->msg.fgColor.g);
+  DEBUG4_VALUE(",", state->msg.fgColor.b);
+  DEBUG_ENDLN();
+
+  return true;
+}
+
+boolean section_twinkle(output_hdr_t *output, void *object,
+                        program_tracker_t *tracker) {
+  unsigned long now = timesync.ms();
+  auto *state = (section_twinkle_state_t *) tracker->state;
+  unsigned long elapsed = now - state->previous_time;
+  PixelUtil *pixels = (PixelUtil *) object;
+  CRGB current;
+
+  for (uint8_t section = 0;
+       section < pixels->numPixels() / state->msg.strip_length;
+       section++) {
+    bool twinkle = false;
+    /*
+     * If the section is not currently twinkling then determine if it should
+     * start.
+     */
+    if (state->start_periods[section] < now - state->msg.twinkle_ms * 2) {
+      /* Not currently twinkling */
+      if (random(state->msg.period_ms) < elapsed) {
+        state->start_periods[section] = now;
+        twinkle = true;
+        DEBUG4_VALUE("twinkle: start:", section);
+      }
+    } else {
+      /* Currently twinkling */
+      twinkle = true;
+      DEBUG4_VALUE("twinkle: on:", section);
     }
 
-    pixels->setPixelRGB(led, current);
+    // If this section is twinkling then set its color
+    if (twinkle) {
+      unsigned long section_elapsed = now - state->start_periods[section];
+      fract8 fraction;
 
-    color_count++;
+      if (section_elapsed < state->msg.twinkle_ms) {
+        // Fading up
+        fraction = (fract8)map(section_elapsed, 0, state->msg.twinkle_ms, 0, 255);
+        DEBUG4_VALUE(" up:", fraction);
+      } else {
+        // Fading down
+        fraction = (fract8)map(section_elapsed - state->msg.twinkle_ms, 0, state->msg.twinkle_ms, 255, 0);
+        DEBUG4_VALUE(" down:", fraction);
+      }
+
+      current = blend(state->msg.bgColor, state->msg.fgColor, fraction);
+      set_led_section(pixels, section, state->msg.strip_length, current);
+    } else {
+      set_led_section(pixels, section, state->msg.strip_length, state->msg.bgColor);
+    }
+
+    DEBUG_ENDLN();
   }
+
+  state->previous_time = now;
 
   return true;
 }
