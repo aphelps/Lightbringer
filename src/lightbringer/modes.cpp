@@ -59,17 +59,23 @@ void startup_commands() {
 //                      0,0,0,0,0,0,0,0,0,0);
 
   DEBUG3_VALUELN("Init: triangles fade ", output);
-  CRGB colors[6] = {
+  CRGB colors[] = {
+          CRGB(00,00,00),
           CRGB(50,00,00),
           CRGB(25,25,00),
           CRGB(00,50,00),
           CRGB(00,25,25),
           CRGB(00,00,50),
           CRGB(25,00,25),
+          CRGB(10,10,10),
   };
   program_triangles_fade_fmt(rs485.send_buffer, rs485.send_data_size,
                              config.address, output,
-                             1000, sizeof(colors) / sizeof(CRGB), 0, 1, colors);
+                             1000, // Period
+                             sizeof(colors) / sizeof(CRGB),
+                             0, // Strip length (0 == default)
+                             1,
+                             colors);
 
   handler.process_msg((msg_hdr_t *)rs485.send_buffer, &rs485, NULL, &config);
 
@@ -186,8 +192,9 @@ boolean program_test_pixels(output_hdr_t *output, void *object,
   return false;
 }
 
-/*
- *
+/******************************************************************************
+ * This color mode splits the pixels into segments, and then fades each segment
+ * through a defined color sequence.
  */
 
 uint16_t program_triangles_fade_fmt(byte *buffer, uint16_t buffsize,
@@ -210,7 +217,6 @@ uint16_t program_triangles_fade_fmt(byte *buffer, uint16_t buffsize,
   program->period = period;
   program->num_colors = num_colors;
   program->strip_length = strip_length;
-  program->strip_length = strip_length;
   program->flags = flags;
   memcpy(program->colors, colors, sizeof(CRGB) * num_colors);
 
@@ -232,11 +238,11 @@ boolean program_triangles_fade_init(msg_program_t *msg,
   triangles_fade_state_t *state =
           (triangles_fade_state_t *)manager->get_program_state(tracker, sizeof(triangles_fade_state_t));
 
-  DEBUG4_VALUE(" msgsz=", sizeof (state->msg));
+  DEBUG4_VALUE(" msgsz:", sizeof (state->msg));
 
   memcpy(&state->msg, msg->values, sizeof (state->msg)); // ??? Correct size?
   if (state->msg.period == 0) state->msg.period = 50;
-  if (state->msg.strip_length == 0) state->msg.strip_length = TRIANGLE_SIZE;
+  if (state->msg.strip_length == 0) state->msg.strip_length = DEFAULT_STRIP_LENGTH;
 
   state->last_change_ms = 0;
   state->start_color = 0;
@@ -245,42 +251,50 @@ boolean program_triangles_fade_init(msg_program_t *msg,
   DEBUG4_VALUE(" num_colors:", state->msg.num_colors);
   DEBUG4_VALUE(" strip_length:", state->msg.strip_length);
   DEBUG4_VALUE(" flags:", state->msg.flags);
+  for (byte i = 0; i < state->msg.num_colors; i++) {
+    DEBUG4_VALUELN(" ", state->msg.colors[i].r);
+    DEBUG4_VALUELN(",", state->msg.colors[i].g);
+    DEBUG4_VALUELN(",", state->msg.colors[i].b);
+  }
   DEBUG_ENDLN();
 
   return true;
-
 }
 
 boolean program_triangles_fade(output_hdr_t *output, void *object,
                                program_tracker_t *tracker) {
   unsigned long now = timesync.ms();
-  triangles_fade_state_t *state = (triangles_fade_state_t *)tracker->state;
+  auto *state = (triangles_fade_state_t *)tracker->state;
+  PixelUtil *pixels = (PixelUtil*)object;
 
-  if (now - state->last_change_ms >= state->msg.period) {
-    PixelUtil *pixels = (PixelUtil*)object;
-
+  unsigned long elapsed = now - state->last_change_ms;
+  if (elapsed >= state->msg.period) {
+    /* Advance to the next phase */
+    elapsed = state->msg.period;
     state->last_change_ms = now;
-
-    uint8_t color = state->start_color % state->msg.num_colors;
-    uint8_t color_count = 0;
-
-    for (uint16_t led = 0; led < pixels->numPixels(); led++) {
-      if (color_count == state->msg.strip_length) {
-        color = (color + (uint8_t)1) % state->msg.num_colors;
-        color_count = 0;
-      }
-
-      // TODO: Interpolate
-
-      pixels->setPixelRGB(led, state->msg.colors[color]);
-
-      color_count++;
-    }
-
     state->start_color++;
-
-    return true;
   }
 
-  return false;
+  fract8 fraction = (fract8)map(elapsed, 0, state->msg.period, 0, 255);
+
+  uint8_t color = state->start_color % state->msg.num_colors;
+  uint8_t color_count = 0;
+  CRGB current = state->msg.colors[color];
+
+  for (uint16_t led = 0; led < pixels->numPixels(); led++) {
+    if (color_count % state->msg.strip_length == 0) {
+      /* Advance to the next color and determine the color fade to actually use */
+      color = (color + (uint8_t)1) % state->msg.num_colors;
+      current = blend(state->msg.colors[color],
+                      state->msg.colors[(color + 1) % state->msg.num_colors],
+                      fraction);
+      color_count = 0;
+    }
+
+    pixels->setPixelRGB(led, current);
+
+    color_count++;
+  }
+
+  return true;
 }
